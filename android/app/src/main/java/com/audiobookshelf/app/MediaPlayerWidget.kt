@@ -108,13 +108,17 @@ internal fun bookPendingIntent(context: Context, session: PlaybackSession?): Pen
   val intent = Intent(context, MainActivity::class.java).apply {
     flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK
     if (session != null) {
-      data = Uri.Builder().scheme("audiobookshelf").authority("widget")
-        .appendQueryParameter("libraryItemId", session.libraryItemId)
-        .appendQueryParameter("episodeId", session.episodeId)
-        .appendQueryParameter("localLibraryItemId", session.localLibraryItem?.id)
-        .appendQueryParameter("localEpisodeId", session.localEpisodeId)
-        .appendQueryParameter("serverConnectionConfigId", session.serverConnectionConfigId)
-        .build()
+      val uri = Uri.Builder().scheme("audiobookshelf").authority("widget")
+      mapOf(
+        "libraryItemId" to session.libraryItemId,
+        "episodeId" to session.episodeId,
+        "localLibraryItemId" to session.localLibraryItem?.id,
+        "localEpisodeId" to session.localEpisodeId,
+        "serverConnectionConfigId" to session.serverConnectionConfigId
+      ).forEach { (key, value) ->
+        if (!value.isNullOrEmpty()) uri.appendQueryParameter(key, value)
+      }
+      data = uri.build()
     }
   }
   return PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)

@@ -92,6 +92,14 @@ class WidgetPlaybackTest {
     assertEquals("local_episode", intent.data!!.getQueryParameter("localEpisodeId"))
   }
 
+  @Test fun bookTapOmitsMissingEpisodeIdsInsteadOfEncodingTheWordNull() {
+    val intent = shadowOf(bookPendingIntent(app, savedSession())).savedIntent
+    assertEquals("local_book", intent.data!!.getQueryParameter("localLibraryItemId"))
+    assertNull(intent.data!!.getQueryParameter("localEpisodeId"))
+    assertNull(intent.data!!.getQueryParameter("episodeId"))
+    assertNull(intent.data!!.getQueryParameter("libraryItemId"))
+  }
+
   @Test fun coldWidgetPlayRestoresTheSavedBookAndPositionWithoutAnActivity() {
     DeviceManager.setLastPlaybackSession(savedSession())
     val controller = Robolectric.buildService(PlayerNotificationService::class.java).create()
