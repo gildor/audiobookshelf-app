@@ -18,6 +18,7 @@ export const state = () => ({
   isNetworkUnmetered: true,
   isFirstLoad: true,
   isFirstAudioLoad: true,
+  widgetLaunchChecked: false,
   hasStoragePermission: false,
   selectedLibraryItem: null,
   showReader: false,
@@ -139,6 +140,9 @@ export const actions = {
 }
 
 export const mutations = {
+  setWidgetLaunchChecked(state) {
+    state.widgetLaunchChecked = true
+  },
   setDeviceData(state, deviceData) {
     state.deviceData = deviceData
   },

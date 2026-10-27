@@ -60,6 +60,16 @@ android {
       proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
     }
   }
+  testOptions {
+    unitTests.includeAndroidResources = true
+    unitTests.all {
+      javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(21)
+      }
+      // PaperDB's Kryo serializers inspect the JDK collection implementations.
+      jvmArgs '--add-opens=java.base/java.util=ALL-UNNAMED', '--add-opens=java.base/java.lang=ALL-UNNAMED'
+    }
+  }
 }
 
 repositories {
@@ -81,6 +91,8 @@ configurations.configureEach {
 }
 
 dependencies {
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.robolectric:robolectric:4.14.1'
   implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
   implementation fileTree(include: ['*.jar'], dir: 'libs')
   implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"

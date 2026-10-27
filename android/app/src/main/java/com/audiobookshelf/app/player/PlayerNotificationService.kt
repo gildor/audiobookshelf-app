@@ -22,6 +22,7 @@ import androidx.media.VolumeProviderCompat
 import android.media.AudioManager
 import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
+import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -29,6 +30,8 @@ import androidx.media.MediaBrowserServiceCompat
 import androidx.media.utils.MediaConstants
 import com.audiobookshelf.app.BuildConfig
 import com.audiobookshelf.app.R
+import com.audiobookshelf.app.MediaPlayerWidget
+import com.audiobookshelf.app.bookPendingIntent
 import com.audiobookshelf.app.data.*
 import com.audiobookshelf.app.data.DeviceInfo
 import com.audiobookshelf.app.device.DeviceManager
@@ -120,6 +123,9 @@ class PlayerNotificationService : MediaBrowserServiceCompat() {
 
   var currentPlaybackSession: PlaybackSession? = null
   private var initialPlaybackRate: Float? = null
+  private var restoringPlayback = false
+  private val restoreHandler = Handler(Looper.getMainLooper())
+  private var restoreTimeout: Runnable? = null
 
   private val metadataScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
   private var metadataArtJob: Job? = null
@@ -168,6 +174,21 @@ class PlayerNotificationService : MediaBrowserServiceCompat() {
     isStarted = true
     Log.d(tag, "onStartCommand $startId")
 
+    when (intent?.action) {
+      MediaPlayerWidget.ACTION_PLAY_PAUSE,
+      MediaPlayerWidget.ACTION_FORWARD,
+      MediaPlayerWidget.ACTION_REWIND -> {
+        // A widget tap may create this service in a fresh process. Promote it before
+        // doing any network work so Android's foreground-service deadline is met.
+        showWidgetForegroundNotification()
+        if (currentPlaybackSession == null) {
+          restoreLastPlayback(intent.action!!)
+        } else {
+          applyWidgetAction(intent.action!!)
+        }
+      }
+    }
+
     return START_STICKY
   }
 
@@ -188,6 +209,9 @@ class PlayerNotificationService : MediaBrowserServiceCompat() {
 
   // detach player
   override fun onDestroy() {
+    restoreTimeout?.let { restoreHandler.removeCallbacks(it) }
+    restoringPlayback = false
+    savePlaybackForResume()
     try {
       val connectivityManager =
               getSystemService(ConnectivityManager::class.java) as ConnectivityManager
@@ -199,13 +223,15 @@ class PlayerNotificationService : MediaBrowserServiceCompat() {
     Log.d(tag, "onDestroy")
     isStarted = false
     isClosed = true
-    DeviceManager.widgetUpdater?.onPlayerChanged(this)
+    DeviceManager.widgetUpdater?.onPlayerClosed()
 
     playerNotificationManager.setPlayer(null)
     mPlayer.release()
     castPlayer?.release()
     mediaSession.release()
     mediaProgressSyncer.reset()
+    PlayerListener.lazyIsPlaying = false
+    PlayerNotificationListener.isForegroundService = false
     metadataScope.cancel()
 
     super.onDestroy()
@@ -383,6 +409,7 @@ class PlayerNotificationService : MediaBrowserServiceCompat() {
 
     initializeMPlayer()
     currentPlayer = mPlayer
+    DeviceManager.widgetUpdater?.onPlayerClosed()
   }
 
   private fun initializeMPlayer() {
@@ -425,6 +452,8 @@ class PlayerNotificationService : MediaBrowserServiceCompat() {
           playWhenReady: Boolean,
           playbackRate: Float?
   ) {
+    restoringPlayback = false
+    restoreTimeout?.let { restoreHandler.removeCallbacks(it) }
     if (!isStarted) {
       Log.i(tag, "preparePlayer: foreground service not started - Starting service --")
       Intent(ctx, PlayerNotificationService::class.java).also { intent ->
@@ -468,6 +497,7 @@ class PlayerNotificationService : MediaBrowserServiceCompat() {
     }
 
     currentPlaybackSession = playbackSession
+    mediaSession.setSessionActivity(bookPendingIntent(ctx, playbackSession))
     DeviceManager.setLastPlaybackSession(
             playbackSession
     ) // Save playback session to use when app is closed
@@ -819,7 +849,112 @@ class PlayerNotificationService : MediaBrowserServiceCompat() {
   }
 
   fun getCurrentPlaybackSessionCopy(): PlaybackSession? {
-    return currentPlaybackSession?.clone()
+    return currentPlaybackSession?.clone()?.also {
+      if (currentPlayer.mediaItemCount > 0) it.currentTime = getCurrentTimeSeconds()
+    }
+  }
+
+  fun savePlaybackForResume() {
+    getCurrentPlaybackSessionCopy()?.let {
+      it.updatedAt = System.currentTimeMillis()
+      DeviceManager.setLastPlaybackSession(it)
+    }
+  }
+
+  private fun showWidgetForegroundNotification() {
+    if (PlayerNotificationListener.isForegroundService) return
+    val session = currentPlaybackSession ?: DeviceManager.deviceData.lastPlaybackSession
+    val notification = NotificationCompat.Builder(this, channelId)
+      .setSmallIcon(R.drawable.icon_monochrome)
+      .setContentTitle(session?.displayTitle ?: getString(R.string.app_name))
+      .setContentText(session?.displayAuthor)
+      .setContentIntent(bookPendingIntent(this, session))
+      .setOnlyAlertOnce(true)
+      .setOngoing(true)
+      .build()
+    startForeground(notificationId, notification)
+    PlayerNotificationListener.isForegroundService = true
+  }
+
+  private fun applyWidgetAction(action: String) {
+    when (action) {
+      MediaPlayerWidget.ACTION_PLAY_PAUSE -> playPause()
+      MediaPlayerWidget.ACTION_FORWARD -> jumpForward()
+      MediaPlayerWidget.ACTION_REWIND -> jumpBackward()
+    }
+    savePlaybackForResume()
+  }
+
+  private fun failWidgetRestore() {
+    restoringPlayback = false
+    restoreTimeout?.let { restoreHandler.removeCallbacks(it) }
+    Toast.makeText(this, R.string.widget_resume_failed, Toast.LENGTH_LONG).show()
+    DeviceManager.widgetUpdater?.onPlayerClosed()
+    stopForeground(Service.STOP_FOREGROUND_REMOVE)
+    PlayerNotificationListener.isForegroundService = false
+    stopSelf()
+  }
+
+  private fun restoreLastPlayback(action: String) {
+    if (restoringPlayback) return
+    val saved = DeviceManager.deviceData.lastPlaybackSession ?: return failWidgetRestore()
+    restoringPlayback = true
+    restoreTimeout = Runnable { if (restoringPlayback) failWidgetRestore() }.also {
+      restoreHandler.postDelayed(it, 20000)
+    }
+
+    fun prepared(session: PlaybackSession?) {
+      restoreHandler.post {
+        // Ignore a late network response after a timeout or a different playback request.
+        if (!restoringPlayback) return@post
+        if (session == null) {
+          failWidgetRestore()
+          return@post
+        }
+        restoringPlayback = false
+        restoreTimeout?.let { restoreHandler.removeCallbacks(it) }
+        preparePlayer(session, action == MediaPlayerWidget.ACTION_PLAY_PAUSE, mediaManager.getSavedPlaybackRate())
+        if (action != MediaPlayerWidget.ACTION_PLAY_PAUSE) applyWidgetAction(action)
+      }
+    }
+
+    // Prefer the current downloaded copy, including downloads made since the last stream.
+    val localItem = if (saved.isLocal) {
+      DeviceManager.dbManager.getLocalLibraryItem(saved.localLibraryItemId)
+    } else {
+      DeviceManager.dbManager.getLocalLibraryItems().find {
+        it.libraryItemId == saved.libraryItemId &&
+          it.serverConnectionConfigId == saved.serverConnectionConfigId && it.serverUserId == saved.userId
+      }
+    }
+    val episode = (localItem?.media as? Podcast)?.episodes?.find {
+      if (saved.isLocal) it.id == saved.localEpisodeId else it.serverEpisodeId == saved.episodeId
+    }
+    if (localItem != null && (!saved.isPodcastEpisode || episode != null) && localItem.hasTracks(this, episode)) {
+      val session = localItem.getPlaybackSession(episode, getDeviceInfo())
+      val progress = DeviceManager.dbManager.getLocalMediaProgress(session.localMediaProgressId)
+      if (saved.isLocal && (progress?.lastUpdate ?: 0L) <= saved.updatedAt) session.currentTime = saved.currentTime
+      prepared(session)
+      return
+    }
+
+    val config = DeviceManager.getServerConnectionConfig(saved.serverConnectionConfigId)
+    if (config == null || config.userId != saved.userId || saved.libraryItemId.isNullOrEmpty() || !DeviceManager.checkConnectivity(this)) {
+      failWidgetRestore()
+      return
+    }
+    val connectivity = getSystemService(ConnectivityManager::class.java)
+    val cellularSetting = DeviceManager.deviceData.deviceSettings?.streamingUsingCellular
+    if (connectivity.isActiveNetworkMetered && cellularSetting != StreamingUsingCellularSetting.ALWAYS) {
+      failWidgetRestore()
+      return
+    }
+    DeviceManager.serverConnectionConfig = config
+    val hasUnsyncedProgress = DeviceManager.dbManager.getPlaybackSessions().any { it.id == saved.id }
+    apiHandler.playLibraryItem(saved.libraryItemId!!, saved.episodeId, getPlayItemRequestPayload(false)) { session ->
+      if (hasUnsyncedProgress) session?.currentTime = saved.currentTime
+      prepared(session)
+    }
   }
 
   fun getCurrentBookChapter(): BookChapter? {
@@ -958,6 +1093,7 @@ class PlayerNotificationService : MediaBrowserServiceCompat() {
 
   fun pause() {
     currentPlayer.pause()
+    savePlaybackForResume()
   }
 
   fun playPause(): Boolean {
@@ -990,6 +1126,7 @@ class PlayerNotificationService : MediaBrowserServiceCompat() {
     } else {
       currentPlayer.seekTo(timeToSeek)
     }
+    savePlaybackForResume()
   }
 
   fun skipToPrevious() {
@@ -1026,6 +1163,7 @@ class PlayerNotificationService : MediaBrowserServiceCompat() {
 
   fun closePlayback(calledOnError: Boolean? = false) {
     Log.d(tag, "closePlayback")
+    savePlaybackForResume()
     val config = DeviceManager.serverConnectionConfig
 
     val isLocal = mediaProgressSyncer.currentIsLocal

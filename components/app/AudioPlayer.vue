@@ -946,14 +946,23 @@ export default {
     async init() {
       await this.loadPlayerSettings()
 
-      AbsAudioPlayer.addListener('onPlaybackSession', this.onPlaybackSession)
-      AbsAudioPlayer.addListener('onPlaybackClosed', this.onPlaybackClosed)
-      AbsAudioPlayer.addListener('onPlaybackFailed', this.onPlaybackFailed)
-      AbsAudioPlayer.addListener('onPlayingUpdate', this.onPlayingUpdate)
-      AbsAudioPlayer.addListener('onMetadata', this.onMetadata)
+      await AbsAudioPlayer.addListener('onPlaybackSession', this.onPlaybackSession)
+      await AbsAudioPlayer.addListener('onPlaybackClosed', this.onPlaybackClosed)
+      await AbsAudioPlayer.addListener('onPlaybackFailed', this.onPlaybackFailed)
+      await AbsAudioPlayer.addListener('onPlayingUpdate', this.onPlayingUpdate)
+      await AbsAudioPlayer.addListener('onMetadata', this.onMetadata)
       AbsAudioPlayer.addListener('onProgressSyncFailing', this.showProgressSyncIsFailing)
       AbsAudioPlayer.addListener('onProgressSyncSuccess', this.showProgressSyncSuccess)
       AbsAudioPlayer.addListener('onPlaybackSpeedChanged', this.onPlaybackSpeedChanged)
+      if (this.$platform === 'android') {
+        const state = await AbsAudioPlayer.getPlaybackState()
+        if (state.playbackSession) {
+          this.onPlaybackSession(state.playbackSession)
+          this.currentPlaybackRate = state.playbackRate || 1
+          this.onPlayingUpdate({ value: state.isPlaying })
+          this.onMetadata({ duration: state.playbackSession.duration, currentTime: state.playbackSession.currentTime, playerState: 'READY' })
+        }
+      }
     },
     async screenOrientationChange() {
       if (this.isRefreshingUI) return

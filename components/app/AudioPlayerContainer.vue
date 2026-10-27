@@ -41,6 +41,12 @@ export default {
     }
   },
   mixins: [CellularPermissionHelpers],
+  watch: {
+    currentPlaybackSession(session) {
+      this.serverLibraryItemId = session?.libraryItemId || null
+      this.serverEpisodeId = session?.episodeId || null
+    }
+  },
   computed: {
     bookmarks() {
       if (!this.serverLibraryItemId) return []

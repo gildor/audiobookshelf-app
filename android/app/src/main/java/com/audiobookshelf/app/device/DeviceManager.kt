@@ -46,6 +46,8 @@ object DeviceManager {
     get() = serverConnectionConfig != null
 
   var widgetUpdater: WidgetEventEmitter? = null
+  var widgetPlaybackSession: PlaybackSession? = null
+  var widgetIsPlaying = false
 
   init {
     Log.d(tag, "Device Manager Singleton invoked")
@@ -195,17 +197,20 @@ object DeviceManager {
    * Initializes the widget updater.
    * @param context The context to use for initializing the widget updater.
    */
-  fun initializeWidgetUpdater(context: Context) {
+  fun initializeWidgetUpdater(ctx: Context) {
+    val context = ctx.applicationContext
     Log.d(tag, "Initializing widget updater")
     widgetUpdater =
             (object : WidgetEventEmitter {
               override fun onPlayerChanged(pns: PlayerNotificationService) {
-                val isPlaying = pns.currentPlayer.isPlaying
+                val isPlaying = pns.currentPlayer.isPlaying && !PlayerNotificationService.isClosed
+                widgetIsPlaying = isPlaying
+                widgetPlaybackSession = pns.getCurrentPlaybackSessionCopy()
 
                 val appWidgetManager = AppWidgetManager.getInstance(context)
                 val componentName = ComponentName(context, MediaPlayerWidget::class.java)
                 val ids = appWidgetManager.getAppWidgetIds(componentName)
-                val playbackSession = pns.getCurrentPlaybackSessionCopy()
+                val playbackSession = pns.getCurrentPlaybackSessionCopy() ?: deviceData.lastPlaybackSession
 
                 for (widgetId in ids) {
                   updateAppWidget(
@@ -220,6 +225,8 @@ object DeviceManager {
               }
 
               override fun onPlayerClosed() {
+                widgetPlaybackSession = null
+                widgetIsPlaying = false
                 val appWidgetManager = AppWidgetManager.getInstance(context)
                 val componentName = ComponentName(context, MediaPlayerWidget::class.java)
                 val ids = appWidgetManager.getAppWidgetIds(componentName)

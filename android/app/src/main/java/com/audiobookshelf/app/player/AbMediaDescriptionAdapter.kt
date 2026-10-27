@@ -8,6 +8,7 @@ import android.os.Build
 import android.provider.MediaStore
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaControllerCompat
+import com.audiobookshelf.app.R
 import com.google.android.exoplayer2.Player
 import com.google.android.exoplayer2.ui.PlayerNotificationManager
 import kotlinx.coroutines.*
@@ -24,17 +25,20 @@ class AbMediaDescriptionAdapter (private val controller: MediaControllerCompat, 
   override fun createCurrentContentIntent(player: Player): PendingIntent? =
     controller.sessionActivity
 
-  override fun getCurrentContentText(player: Player) = controller.metadata.description.subtitle.toString()
+  override fun getCurrentContentText(player: Player): CharSequence? =
+    controller.metadata?.description?.subtitle ?: playerNotificationService.currentPlaybackSession?.displayAuthor
 
-  override fun getCurrentContentTitle(player: Player) = controller.metadata.description.title.toString()
+  override fun getCurrentContentTitle(player: Player): CharSequence =
+    controller.metadata?.description?.title ?: playerNotificationService.currentPlaybackSession?.displayTitle ?: playerNotificationService.getString(R.string.app_name)
 
   override fun getCurrentLargeIcon(
     player: Player,
     callback: PlayerNotificationManager.BitmapCallback
   ): Bitmap? {
-    val albumArtUri = controller.metadata.description.iconUri
-    val albumBitmap = controller.metadata.description.iconBitmap
-      ?: controller.metadata.getBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART)
+    val metadata = controller.metadata ?: playerNotificationService.currentPlaybackSession?.getMediaMetadataCompat(playerNotificationService) ?: return null
+    val albumArtUri = metadata.description.iconUri
+    val albumBitmap = metadata.description.iconBitmap
+      ?: metadata.getBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART)
 
     // Reuse bitmap from queue navigator (local) or PlaybackSession.resolveCoverBitmapAsync (streaming)
     // For local cover images, bitmap is set in PlayerNotificationService TimelineQueueNavigator.getMediaDescription

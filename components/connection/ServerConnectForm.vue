@@ -902,7 +902,8 @@ export default {
       this.$store.commit('user/setServerConnectionConfig', serverConnectionConfig)
 
       this.$socket.connect(this.serverConfig.address, this.serverConfig.token)
-      this.$router.replace('/bookshelf')
+      const redirect = this.$route.query.redirect
+      this.$router.replace(typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/bookshelf')
     },
     async authenticateToken() {
       if (!this.networkConnected) return

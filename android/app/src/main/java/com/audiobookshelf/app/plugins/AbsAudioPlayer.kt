@@ -35,6 +35,7 @@ class AbsAudioPlayer : Plugin() {
 
   // Track foreground state to avoid flooding WebView with events while backgrounded
   private var isInForeground: Boolean = true
+  private var pendingPlaybackStateCall: PluginCall? = null
 
   override fun load() {
     mainActivity = (activity as MainActivity)
@@ -117,6 +118,10 @@ class AbsAudioPlayer : Plugin() {
       })
 
       MediaEventManager.clientEventEmitter = playerNotificationService.clientEventEmitter
+      pendingPlaybackStateCall?.let {
+        pendingPlaybackStateCall = null
+        resolvePlaybackState(it)
+      }
     }
     mainActivity.pluginCallback = foregroundServiceReady
   }
@@ -127,7 +132,30 @@ class AbsAudioPlayer : Plugin() {
     notifyListeners(evtName, ret)
   }
 
+  // The widget can start playback before a WebView exists. Let newly attached UI
+  // request the state after its listeners are installed, including a cold bind.
+  @PluginMethod
+  fun getPlaybackState(call: PluginCall) {
+    activity.runOnUiThread {
+      if (::playerNotificationService.isInitialized) resolvePlaybackState(call)
+      else pendingPlaybackStateCall = call
+    }
+  }
+
+  private fun resolvePlaybackState(call: PluginCall) {
+    val session = playerNotificationService.getCurrentPlaybackSessionCopy()
+    val result = JSObject()
+    if (session != null) {
+      result.put("playbackSession", JSObject(jacksonMapper.writeValueAsString(session)))
+      result.put("isPlaying", playerNotificationService.currentPlayer.isPlaying)
+      result.put("playbackRate", playerNotificationService.currentPlayer.playbackParameters.speed)
+    }
+    call.resolve(result)
+  }
+
   override fun handleOnDestroy() {
+    pendingPlaybackStateCall?.reject("Activity destroyed before the player service connected")
+    pendingPlaybackStateCall = null
     castManager?.detach()
     super.handleOnDestroy()
   }

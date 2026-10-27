@@ -17,6 +17,8 @@
 <script>
 import { CapacitorHttp } from '@capacitor/core'
 import { AbsLogger } from '@/plugins/capacitor'
+import { App } from '@capacitor/app'
+import { parseWidgetLink } from '@/utils/widgetLink'
 
 export default {
   data() {
@@ -26,7 +28,8 @@ export default {
       disconnectTime: 0,
       socketDisconnectedTime: 0,
       timeLostFocus: 0,
-      currentLang: null
+      currentLang: null,
+      pendingWidgetLink: null
     }
   },
   watch: {
@@ -112,6 +115,25 @@ export default {
     }
   },
   methods: {
+    widgetUrlOpened(url) {
+      const link = parseWidgetLink(url)
+      if (!link) return
+      this.pendingWidgetLink = link
+      if (this.hasMounted) this.openWidgetBook()
+    },
+    openWidgetBook() {
+      const link = this.pendingWidgetLink
+      if (!link) return
+      this.pendingWidgetLink = null
+      const configId = this.$store.getters['user/getServerConnectionConfigId']
+      if (!link.isLocal && (!this.user || configId !== link.serverConnectionConfigId)) {
+        const query = { redirect: link.path }
+        if (link.serverConnectionConfigId) query.serverConnectionConfigId = link.serverConnectionConfigId
+        this.$router.push({ path: '/connect', query })
+      } else if (this.$route.fullPath !== link.path) {
+        this.$router.push(link.path)
+      }
+    },
     initialStream(stream) {
       if (this.$refs.streamContainer?.audioPlayerReady) {
         this.$refs.streamContainer.streamOpen(stream)
@@ -349,6 +371,12 @@ export default {
     }
   },
   async mounted() {
+    this.$eventBus.$on('url-open', this.widgetUrlOpened)
+    if (this.$platform === 'android' && !this.$store.state.widgetLaunchChecked) {
+      this.$store.commit('setWidgetLaunchChecked')
+      const launch = await App.getLaunchUrl()
+      if (launch?.url) this.widgetUrlOpened(launch.url)
+    }
     this.$eventBus.$on('change-lang', this.changeLanguage)
     document.addEventListener('visibilitychange', this.visibilityChanged)
 
@@ -376,15 +404,19 @@ export default {
         await this.attemptConnection()
       }
 
-      await this.syncLocalSessions(true)
-
       this.hasMounted = true
+      this.openWidgetBook()
+
+      await this.syncLocalSessions(true)
 
       AbsLogger.info({ tag: 'default', message: 'mounted: fully initialized' })
       this.$eventBus.$emit('abs-ui-ready')
     }
+    this.hasMounted = true
+    this.openWidgetBook()
   },
   beforeDestroy() {
+    this.$eventBus.$off('url-open', this.widgetUrlOpened)
     this.$eventBus.$off('change-lang', this.changeLanguage)
     document.removeEventListener('visibilitychange', this.visibilityChanged)
     this.$socket.off('user_updated', this.userUpdated)
