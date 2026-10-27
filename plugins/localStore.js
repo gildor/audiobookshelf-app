@@ -1,8 +1,44 @@
 import { Preferences } from '@capacitor/preferences'
+import { homeCacheKey, parseHomeSnapshot, serializeHomeSnapshot } from '@/utils/homeShelfCache'
 
 class LocalStorage {
   constructor(vuexStore) {
     this.vuexStore = vuexStore
+  }
+
+  async getHomeSnapshot(config) {
+    const key = homeCacheKey(config)
+    if (!key) return null
+    try {
+      const { value } = await Preferences.get({ key })
+      return parseHomeSnapshot(value, config)
+    } catch (error) {
+      console.error('[LocalStorage] Failed to read Home shelves', error)
+      return null
+    }
+  }
+
+  async setHomeSnapshot(config, library, shelves) {
+    const key = homeCacheKey(config)
+    const value = serializeHomeSnapshot(config, library, shelves)
+    if (!key || !value) return null
+    try {
+      await Preferences.set({ key, value })
+      return parseHomeSnapshot(value, config)
+    } catch (error) {
+      console.error('[LocalStorage] Failed to save Home shelves', error)
+      return null
+    }
+  }
+
+  async removeHomeSnapshot(config) {
+    const key = homeCacheKey(config)
+    if (!key) return
+    try {
+      await Preferences.remove({ key })
+    } catch (error) {
+      console.error('[LocalStorage] Failed to clear Home shelves', error)
+    }
   }
 
   async setUserSettings(settings) {

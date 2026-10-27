@@ -161,10 +161,11 @@ export const actions = {
     }
 
     await this.$db.logout()
+    await this.$localStore.removeHomeSnapshot(state.serverConnectionConfig)
     this.$socket.logout()
     this.$localStore.removeLastLibraryId()
     commit('logout')
-    commit('libraries/setCurrentLibrary', null, { root: true })
+    commit('libraries/reset', null, { root: true })
     await AbsLogger.info({ tag: 'user', message: `Logged out from server ${state.serverConnectionConfig?.name || 'Not connected'}` })
   },
   async refreshToken({ getters, commit, state }) {

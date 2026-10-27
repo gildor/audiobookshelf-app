@@ -1,4 +1,5 @@
 const { BookCoverAspectRatio } = require('../plugins/constants')
+import { homeCacheKey } from '@/utils/homeShelfCache'
 
 export const state = () => ({
   libraries: [],
@@ -8,10 +9,19 @@ export const state = () => ({
   issues: 0,
   filterData: null,
   numUserPlaylists: 0,
-  ereaderDevices: []
+  ereaderDevices: [],
+  cachedHome: null
 })
 
 export const getters = {
+  getCachedServerConfig: (state, getters, rootState) => {
+    const deviceData = rootState.deviceData
+    const config = rootState.user.serverConnectionConfig || deviceData?.serverConnectionConfigs?.find((config) => config.id === deviceData.lastServerConnectionConfigId)
+    return state.cachedHome?.scope === homeCacheKey(config) ? config : null
+  },
+  getHomeSnapshot: (state, getters) => {
+    return getters.getCachedServerConfig && state.cachedHome?.library.id === state.currentLibraryId ? state.cachedHome : null
+  },
   getCurrentLibrary: state => {
     return state.libraries.find(lib => lib.id === state.currentLibraryId)
   },
@@ -34,6 +44,23 @@ export const getters = {
 }
 
 export const actions = {
+  async restoreHome({ commit, rootState }) {
+    const data = rootState.deviceData
+    const config = data?.serverConnectionConfigs?.find((config) => config.id === data.lastServerConnectionConfigId)
+    if (!config || rootState.user.user) return
+    const snapshot = await this.$localStore.getHomeSnapshot(config)
+    if (!snapshot || rootState.user.user || rootState.deviceData?.lastServerConnectionConfigId !== config.id) return
+    commit('addUpdate', snapshot.library)
+    commit('setCurrentLibrary', snapshot.library.id)
+    commit('setCachedHome', snapshot)
+  },
+  async cacheHome({ state, commit, rootState }, { libraryId, shelves }) {
+    const config = rootState.user.serverConnectionConfig
+    const library = state.libraries.find((library) => library.id === libraryId)
+    if (!config || !library) return
+    const snapshot = await this.$localStore.setHomeSnapshot(config, library, shelves)
+    if (snapshot && homeCacheKey(rootState.user.serverConnectionConfig) === snapshot.scope && state.currentLibraryId === libraryId) commit('setCachedHome', snapshot)
+  },
   fetch({ state, commit, dispatch, rootState }, libraryId) {
     if (!rootState.user || !rootState.user.user) {
       console.error('libraries/fetch - User not set')
@@ -93,7 +120,6 @@ export const actions = {
       })
       .catch((error) => {
         console.error('Failed', error)
-        commit('set', [])
         return false
       })
   },
@@ -101,6 +127,9 @@ export const actions = {
 }
 
 export const mutations = {
+  setCachedHome(state, snapshot) {
+    state.cachedHome = snapshot
+  },
   setShowModal(state, val) {
     state.showModal = val
   },
@@ -108,6 +137,7 @@ export const mutations = {
     state.lastLoad = val
   },
   reset(state) {
+    state.cachedHome = null
     state.lastLoad = 0
     state.currentLibraryId = null
     state.libraries = []

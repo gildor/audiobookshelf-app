@@ -391,6 +391,7 @@ export default {
 
       const deviceData = await this.$db.getDeviceData()
       this.$store.commit('setDeviceData', deviceData)
+      await this.$store.dispatch('libraries/restoreHome')
 
       this.$setOrientationLock(this.$store.getters['getOrientationLockSetting'])
 

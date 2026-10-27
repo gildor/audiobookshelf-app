@@ -37,10 +37,11 @@ export const getters = {
       // Absolute URL covers (should no longer be used)
       if (media.coverPath.startsWith('http:') || media.coverPath.startsWith('https:')) return media.coverPath
 
-      const serverAddress = rootGetters['user/getServerAddress']
+      const cachedConfig = rootGetters['libraries/getCachedServerConfig']
+      const serverAddress = rootGetters['user/getServerAddress'] || cachedConfig?.address
       if (!serverAddress) return placeholder
 
-      const lastUpdate = libraryItem.updatedAt || Date.now()
+      const lastUpdate = libraryItem.updatedAt || 0
 
       if (process.env.NODE_ENV !== 'production') {
         // Testing
@@ -52,7 +53,7 @@ export const getters = {
       urlQuery.append('ts', lastUpdate)
       if (raw) urlQuery.append('raw', '1')
       if (rootGetters.getDoesServerImagesRequireToken) {
-        urlQuery.append('token', rootGetters['user/getToken'])
+        urlQuery.append('token', rootGetters['user/getToken'] || cachedConfig?.token)
       }
       return `${url}?${urlQuery}`
     },

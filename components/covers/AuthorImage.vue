@@ -52,13 +52,13 @@ export default {
       return this._author.updatedAt
     },
     serverAddress() {
-      return this.$store.getters['user/getServerAddress']
+      return this.$store.getters['user/getServerAddress'] || this.$store.getters['libraries/getCachedServerConfig']?.address
     },
     imgSrc() {
       if (!this.imagePath || !this.serverAddress) return null
       const urlQuery = new URLSearchParams({ ts: this.updatedAt })
       if (this.$store.getters.getDoesServerImagesRequireToken) {
-        urlQuery.append('token', this.$store.getters['user/getToken'])
+        urlQuery.append('token', this.$store.getters['user/getToken'] || this.$store.getters['libraries/getCachedServerConfig']?.token)
       }
       if (process.env.NODE_ENV !== 'production' && this.serverAddress.startsWith('http://192.168')) {
         // Testing

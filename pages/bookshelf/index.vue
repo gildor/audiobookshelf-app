@@ -38,6 +38,8 @@
 </template>
 
 <script>
+import { homeCacheKey, mergeHomeShelves } from '@/utils/homeShelfCache'
+
 export default {
   props: {},
   data() {
@@ -48,10 +50,22 @@ export default {
       lastServerFetchLibraryId: null,
       lastLocalFetch: 0,
       localLibraryItems: [],
-      isLoading: false
+      isLoading: false,
+      serverCategories: null,
+      serverCategoriesContext: null,
+      fetchRequestId: 0,
+      inFlightContext: null
     }
   },
   watch: {
+    cachedHome() {
+      this.renderShelves()
+    },
+    shelfContext() {
+      this.lastServerFetch = 0
+      this.renderShelves()
+      this.fetchCategories()
+    },
     networkConnected(newVal) {
       // Update shelves when network connect status changes
       console.log(`[categories] Network changed to ${newVal} - fetch categories. ${this.lastServerFetch}/${this.lastLocalFetch}`)
@@ -83,6 +97,15 @@ export default {
     }
   },
   computed: {
+    cachedHome() {
+      return this.$store.getters['libraries/getHomeSnapshot']
+    },
+    shelfConfig() {
+      return this.$store.state.user.serverConnectionConfig || this.$store.getters['libraries/getCachedServerConfig']
+    },
+    shelfContext() {
+      return JSON.stringify([homeCacheKey(this.shelfConfig), this.currentLibraryId])
+    },
     user() {
       return this.$store.state.user.user
     },
@@ -206,79 +229,47 @@ export default {
 
       return categories
     },
-    async fetchCategories() {
-      console.log(`[categories] fetchCategories networkConnected=${this.networkConnected}, lastServerFetch=${this.lastServerFetch}, lastLocalFetch=${this.lastLocalFetch}`)
-
-      // TODO: Find a better way to keep the shelf up-to-date with local vs server library because this is a disaster
-      const isConnectedToServerWithInternet = this.user && this.currentLibraryId && this.networkConnected
-      if (isConnectedToServerWithInternet) {
-        if (this.lastServerFetch && Date.now() - this.lastServerFetch < 5000 && this.lastServerFetchLibraryId == this.currentLibraryId) {
-          console.log(`[categories] fetchCategories server fetch was ${Date.now() - this.lastServerFetch}ms ago so not doing it.`)
-          return
-        } else {
-          console.log(`[categories] fetchCategories fetching from server. Last was ${this.lastServerFetch ? Date.now() - this.lastServerFetch + 'ms' : 'Never'} ago. lastServerFetchLibraryId=${this.lastServerFetchLibraryId} and currentLibraryId=${this.currentLibraryId}`)
-          this.lastServerFetchLibraryId = this.currentLibraryId
-          this.lastServerFetch = Date.now()
-          this.lastLocalFetch = 0
-        }
-      } else {
-        if (this.lastLocalFetch && Date.now() - this.lastLocalFetch < 5000) {
-          console.log(`[categories] fetchCategories local fetch was ${Date.now() - this.lastLocalFetch}ms ago so not doing it.`)
-          return
-        } else {
-          console.log(`[categories] fetchCategories fetching from local. Last was ${this.lastLocalFetch ? Date.now() - this.lastLocalFetch + 'ms' : 'Never'} ago`)
-          this.lastServerFetchLibraryId = null
-          this.lastServerFetch = 0
-          this.lastLocalFetch = Date.now()
-        }
-      }
-
-      this.isLoading = true
-
-      // Set local library items first
-      this.localLibraryItems = await this.$db.getLocalLibraryItems()
+    renderShelves() {
       const localCategories = this.getLocalMediaItemCategories()
-      this.shelves = localCategories
-      console.log('[categories] Local shelves set', this.shelves.length, this.lastLocalFetch)
+      const categories = this.serverCategoriesContext === this.shelfContext ? this.serverCategories : this.cachedHome?.shelves
+      this.shelves = categories ? mergeHomeShelves(categories, this.localLibraryItems, localCategories, this.currentLibraryMediaType, this.shelfConfig?.id) : localCategories
+    },
+    async fetchCategories() {
+      const context = this.shelfContext
+      const online = !!(this.user && this.currentLibraryId && this.networkConnected)
+      const requestContext = JSON.stringify([context, online])
+      if (this.inFlightContext === requestContext) return
+      const requestId = ++this.fetchRequestId
+      this.inFlightContext = requestContext
+      this.isLoading = true
+      const isCurrent = () => requestId === this.fetchRequestId && context === this.shelfContext && online === !!(this.user && this.currentLibraryId && this.networkConnected)
+      try {
+        const localItems = await this.$db.getLocalLibraryItems()
+        if (!isCurrent()) return
+        this.localLibraryItems = localItems
+        // Keep the saved server shelves on screen while refreshing them.
+        this.renderShelves()
+        if (!online || (this.lastServerFetchLibraryId === this.currentLibraryId && Date.now() - this.lastServerFetch < 5000)) return
 
-      if (isConnectedToServerWithInternet) {
-        const categories = await this.$nativeHttp.get(`/api/libraries/${this.currentLibraryId}/personalized?minified=1&include=rssfeed,numEpisodesIncomplete`, { connectTimeout: 10000 }).catch((error) => {
-          console.error('[categories] Failed to fetch categories', error)
-          return []
-        })
-        if (!categories.length) {
-          // Failed to load categories so use local shelves
-          console.warn(`[categories] Failed to get server categories so using local categories`)
-          this.lastServerFetch = 0
-          this.lastLocalFetch = Date.now()
+        const libraryId = this.currentLibraryId
+        const categories = await this.$nativeHttp.get(`/api/libraries/${libraryId}/personalized?minified=1&include=rssfeed,numEpisodesIncomplete`, { connectTimeout: 10000 })
+        if (!isCurrent()) return
+        if (!Array.isArray(categories)) throw new Error('Invalid Home shelves response')
+        this.serverCategories = categories
+        this.serverCategoriesContext = context
+        this.lastServerFetchLibraryId = libraryId
+        this.lastServerFetch = Date.now()
+        this.renderShelves()
+        await this.$store.dispatch('libraries/cacheHome', { libraryId, shelves: categories })
+      } catch (error) {
+        // A timeout or unavailable server leaves the saved shelves and downloads visible.
+        console.error('[categories] Failed to refresh Home shelves', error)
+      } finally {
+        if (requestId === this.fetchRequestId) {
+          this.inFlightContext = null
           this.isLoading = false
-          console.log('[categories] Local shelves set from failure', this.shelves.length, this.lastLocalFetch)
-          return
         }
-
-        this.shelves = categories.map((cat) => {
-          if (cat.type == 'book' || cat.type == 'podcast' || cat.type == 'episode') {
-            // Map localLibraryItem to entities
-            cat.entities = cat.entities.map((entity) => {
-              const localLibraryItem = this.localLibraryItems.find((lli) => {
-                return lli.libraryItemId == entity.id
-              })
-              if (localLibraryItem) {
-                entity.localLibraryItem = localLibraryItem
-              }
-              return entity
-            })
-          }
-          return cat
-        })
-
-        // Only add the local shelf with the same media type
-        const localShelves = localCategories.filter((cat) => cat.type === this.currentLibraryMediaType && !cat.localOnly)
-        this.shelves.push(...localShelves)
-        console.log('[categories] Server shelves set', this.shelves.length, this.lastServerFetch)
       }
-
-      this.isLoading = false
     },
     libraryChanged() {
       if (this.currentLibraryId) {
@@ -344,6 +335,7 @@ export default {
     this.fetchCategories()
   },
   beforeDestroy() {
+    this.fetchRequestId++
     this.removeListeners()
   }
 }
