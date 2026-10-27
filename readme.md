@@ -1,5 +1,21 @@
 # Audiobookshelf Mobile App
 
+## Personal fork test build
+
+This fork has an Android `forkDebug` variant named **Audiobookshelf Fork**, with package `com.audiobookshelf.app.fork`. It installs alongside the official app and the earlier `com.audiobookshelf.app.debug` test build. The first installation has its own server connections, downloads, and settings.
+
+```shell
+npm ci
+npm test
+npm run generate
+npx cap sync android
+ABS_FORK_KEYSTORE=/path/to/your/debug.keystore ./android/gradlew -p android assembleForkDebug
+```
+
+The APK is `android/app/build/outputs/apk/forkDebug/app-forkDebug.apk`. Use a keystore with the conventional Android debug alias and passwords (`androiddebugkey` / `android`). If `ABS_FORK_KEYSTORE` is omitted, the variant uses the standard `~/.android/debug.keystore`. Keep the same keystore for future updates; changing its signing certificate prevents installation over an existing copy. Do not commit the keystore.
+
+The configurable player-controls contribution is maintained separately on `contribution/player-outer-controls`; the cover, widget, and Home-cache fixes are on `fork/player-widget-cache`.
+
 Audiobookshelf is a self-hosted audiobook and podcast server.
 
 ### Android (beta)

@@ -48,12 +48,29 @@ android {
       ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
     }
   }
+  signingConfigs {
+    forkDebug {
+      storeFile file(System.getenv('ABS_FORK_KEYSTORE') ?: "${System.getProperty('user.home')}/.android/debug.keystore")
+      storePassword 'android'
+      keyAlias 'androiddebugkey'
+      keyPassword 'android'
+    }
+  }
   buildTypes {
     debug {
       applicationIdSuffix ".debug"
       versionNameSuffix "-debug"
       minifyEnabled false
       proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+    }
+    forkDebug {
+      initWith debug
+      applicationIdSuffix ".fork"
+      versionNameSuffix "-fork-debug"
+      matchingFallbacks = ['debug']
+      signingConfig signingConfigs.forkDebug
+      resValue 'string', 'app_name', 'Audiobookshelf Fork'
+      resValue 'string', 'title_activity_main', 'Audiobookshelf Fork'
     }
     release {
       minifyEnabled false
